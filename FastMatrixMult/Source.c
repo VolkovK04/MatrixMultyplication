@@ -5,6 +5,9 @@
 #include <string.h>
 #include <time.h>
 #include <assert.h>
+#include <math.h>
+#include <locale.h>
+#include <conio.h>
 
 
 typedef struct {
@@ -21,9 +24,9 @@ typedef struct {
     int width;
 } SubMatrix;
 
-void multShtrassenImp(SubMatrix, SubMatrix, SubMatrix);
-void multRecurrentImp(SubMatrix, SubMatrix, SubMatrix);
-void multNativeImp(SubMatrix, SubMatrix, SubMatrix);
+void multShtrassenImp(SubMatrix, SubMatrix, SubMatrix, int, int*);
+void multRecurrentImp(SubMatrix, SubMatrix, SubMatrix, int);
+void multNativeImp(SubMatrix, SubMatrix, SubMatrix, int);
 void SubMatrix_SetElement(SubMatrix, int, int, int);
 
 void nullCheck(void* ptr) {
@@ -34,13 +37,21 @@ void nullCheck(void* ptr) {
 }
 
 Matrix Matrix_Init(int n, int m) {
-    int* ptr = (int*)calloc(n * m, sizeof(int));
+    int* ptr = (int*)malloc(n * m * sizeof(int));
     nullCheck(ptr);
 
     return (Matrix) {
         .height = n,
-            .width = m,
-            .data = ptr
+        .width = m,
+        .data = ptr
+    };
+}
+
+Matrix Matrix_InitFromBuffer(int n, int m, int* buffer) {
+    return (Matrix) {
+        .height = n,
+        .width = m,
+        .data = buffer
     };
 }
 
@@ -49,16 +60,16 @@ void Matrix_Free(Matrix A) {
 }
 
 int Matrix_GetElement(Matrix A, int i, int j) {
-    if (i >= 0 && i < A.height && j >= 0 && j < A.width) {
-        return A.data[i * A.width + j];
+    int ind = i * A.width + j;
+    if (ind < A.height * A.width) {
+        return A.data[ind];
     }
-    else {
-        return 0;
-    }
+    return 0;
 }
 
 void Matrix_SetElement(Matrix A, int i, int j, int value) {
-    if (i >= 0 && i < A.height && j >= 0 && j < A.width) {
+    int ind = i * A.width + j;
+    if (ind < A.height * A.width) {
         A.data[i * A.width + j] = value;
     }
 }
@@ -100,13 +111,21 @@ void SubtractSubMatrix(SubMatrix A, SubMatrix B, SubMatrix C) {
     }
 }
 
+void CopySubMatrix(SubMatrix A, SubMatrix B) {
+    for (int i = 0; i < A.height; i++) {
+        for (int j = 0; j < A.width; j++) {
+            SubMatrix_SetElement(B, i, j, SubMatrix_GetElement(A, i, j));
+        }
+    }
+}
+
 SubMatrix SubMatrix_Init(Matrix parent, int positionY, int positionX, int height, int width) {
     return (SubMatrix) {
         .parent = parent,
-            .positionX = positionX,
-            .positionY = positionY,
-            .height = height,
-            .width = width
+        .positionX = positionX,
+        .positionY = positionY,
+        .height = height,
+        .width = width
     };
 }
 
@@ -119,20 +138,25 @@ void SubMatrix_SetElement(SubMatrix A, int i, int j, int value) {
 }
 
 void multNative(Matrix A, Matrix B, Matrix C) {
-    SubMatrix A1 = SubMatrix_Init(A, 0, 0, A.height, A.width);
-    SubMatrix B1 = SubMatrix_Init(B, 0, 0, B.height, B.width);
-    SubMatrix C1 = SubMatrix_Init(C, 0, 0, C.height, C.width);
-    multNativeImp(A1, B1, C1);
+    SubMatrix sA = SubMatrix_Init(A, 0, 0, A.height, A.width);
+    SubMatrix sB = SubMatrix_Init(B, 0, 0, B.height, B.width);
+    SubMatrix sC = SubMatrix_Init(C, 0, 0, C.height, C.width);
+    multNativeImp(sA, sB, sC, 0);
 }
 
-void multNativeImp(SubMatrix A, SubMatrix B, SubMatrix C) {
+void multNativeImp(SubMatrix A, SubMatrix B, SubMatrix C, int flagAdd) {
     int m = A.width;
     int n = A.height;
     int p = B.width;
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < p; j++) {
-            //int buff = 0;
-            int buff = SubMatrix_GetElement(C, i, j);
+            int buff;
+            if (flagAdd) {
+                buff = SubMatrix_GetElement(C, i, j);
+            }
+            else {
+                buff = 0;
+            }
             for (int k = 0; k < m; k++) {
                 buff += SubMatrix_GetElement(A, i, k) * SubMatrix_GetElement(B, k, j);
             }
@@ -149,15 +173,17 @@ void multRecurrent(Matrix X, Matrix Y, Matrix Z) {
     SubMatrix X1 = SubMatrix_Init(X, 0, 0, k, k);
     SubMatrix Y1 = SubMatrix_Init(Y, 0, 0, k, k);
     SubMatrix Z1 = SubMatrix_Init(Z, 0, 0, k, k);
-    multRecurrentImp(X1, Y1, Z1);
+    multRecurrentImp(X1, Y1, Z1, 0);
 
 }
 
-void multRecurrentImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1) {
+void multRecurrentImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1, int flagAdd) {
+    if (Z1.positionX >= Z1.parent.width || Z1.positionY >= Z1.parent.height)
+        return;
     int n = X1.height;
-    if (n <= 16)
+    if (n <= 64)
     {
-        multNativeImp(X1, Y1, Z1);
+        multNativeImp(X1, Y1, Z1, flagAdd);
         return;
     }
     int middle = X1.height / 2;
@@ -180,14 +206,14 @@ void multRecurrentImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1) {
     SubMatrix Z21 = SubMatrix_Init(Z, Z1.positionY + middle, Z1.positionX, middle, middle);
     SubMatrix Z22 = SubMatrix_Init(Z, Z1.positionY + middle, Z1.positionX + middle, middle, middle);
 
-    multRecurrentImp(A, E, Z11);
-    multRecurrentImp(B, G, Z11);
-    multRecurrentImp(A, F, Z12);
-    multRecurrentImp(B, H, Z12);
-    multRecurrentImp(C, E, Z21);
-    multRecurrentImp(D, G, Z21);
-    multRecurrentImp(C, F, Z22);
-    multRecurrentImp(D, H, Z22);
+    multRecurrentImp(A, E, Z11, flagAdd);
+    multRecurrentImp(B, G, Z11, 1);
+    multRecurrentImp(A, F, Z12, flagAdd);
+    multRecurrentImp(B, H, Z12, 1);
+    multRecurrentImp(C, E, Z21, flagAdd);
+    multRecurrentImp(D, G, Z21, 1);
+    multRecurrentImp(C, F, Z22, flagAdd);
+    multRecurrentImp(D, H, Z22, 1);
 }
 
 void multShtrassen(Matrix X, Matrix Y, Matrix Z) {
@@ -198,17 +224,22 @@ void multShtrassen(Matrix X, Matrix Y, Matrix Z) {
     SubMatrix X1 = SubMatrix_Init(X, 0, 0, k, k);
     SubMatrix Y1 = SubMatrix_Init(Y, 0, 0, k, k);
     SubMatrix Z1 = SubMatrix_Init(Z, 0, 0, k, k);
-    multShtrassenImp(X1, Y1, Z1);
+    int* buffer = (int*)malloc(3 * k * k * sizeof(int));
+    nullCheck(buffer);
+    multShtrassenImp(X1, Y1, Z1, 0, buffer);
+    free(buffer);
 }
 
-void multShtrassenImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1) {
+void multShtrassenImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1, int flagAdd, int* buffer) {
+    if (Z1.positionX >= Z1.parent.width || Z1.positionY >= Z1.parent.height)
+        return;
     int n = X1.height;
-    if (n <= 16)
+    if (n <= 64)
     {
-        multNativeImp(X1, Y1, Z1);
+        multNativeImp(X1, Y1, Z1, flagAdd);
         return;
     }
-    int middle = X1.height / 2;
+    int middle = n / 2;
     Matrix X = X1.parent;
     Matrix Y = Y1.parent;
     Matrix Z = Z1.parent;
@@ -228,145 +259,155 @@ void multShtrassenImp(SubMatrix X1, SubMatrix Y1, SubMatrix Z1) {
     SubMatrix Z21 = SubMatrix_Init(Z, Z1.positionY + middle, Z1.positionX, middle, middle);
     SubMatrix Z22 = SubMatrix_Init(Z, Z1.positionY + middle, Z1.positionX + middle, middle, middle);
 
-    Matrix P1 = Matrix_Init(middle, middle);
-    Matrix P2 = Matrix_Init(middle, middle);
-    Matrix P3 = Matrix_Init(middle, middle);
-    Matrix P4 = Matrix_Init(middle, middle);
-    Matrix P5 = Matrix_Init(middle, middle);
-    Matrix P6 = Matrix_Init(middle, middle);
-    Matrix P7 = Matrix_Init(middle, middle);
+    int len = middle * middle;
+    Matrix P = Matrix_InitFromBuffer(middle, middle, buffer);
+    buffer += len;
+    Matrix buff1 = Matrix_InitFromBuffer(middle, middle, buffer);
+    buffer += len;
+    Matrix buff2 = Matrix_InitFromBuffer(middle, middle, buffer);
+    buffer += len;
 
-    SubMatrix sP1 = SubMatrix_Init(P1, 0, 0, middle, middle);
-    SubMatrix sP2 = SubMatrix_Init(P2, 0, 0, middle, middle);
-    SubMatrix sP3 = SubMatrix_Init(P3, 0, 0, middle, middle);
-    SubMatrix sP4 = SubMatrix_Init(P4, 0, 0, middle, middle);
-    SubMatrix sP5 = SubMatrix_Init(P5, 0, 0, middle, middle);
-    SubMatrix sP6 = SubMatrix_Init(P6, 0, 0, middle, middle);
-    SubMatrix sP7 = SubMatrix_Init(P7, 0, 0, middle, middle);
-
-    Matrix buff1 = Matrix_Init(middle, middle);
-    Matrix buff2 = Matrix_Init(middle, middle);
-
+    SubMatrix sP = SubMatrix_Init(P, 0, 0, middle, middle);
     SubMatrix sbuff1 = SubMatrix_Init(buff1, 0, 0, middle, middle);
     SubMatrix sbuff2 = SubMatrix_Init(buff2, 0, 0, middle, middle);
-
+    // P1
     SubtractSubMatrix(F, H, sbuff1);
-    multShtrassenImp(A, sbuff1, sP1);
-    SumSubMatrix(A, B, sbuff1);
-    multShtrassenImp(sbuff1, H, sP2);
-    SumSubMatrix(C, D, sbuff1);
-    multShtrassenImp(sbuff1, E, sP3);
+    multShtrassenImp(A, sbuff1, sP, 0, buffer);
+    if (flagAdd) {
+        SumSubMatrix(Z12, sP, Z12);
+        SumSubMatrix(Z22, sP, Z22);
+    }
+    else {
+        CopySubMatrix(sP, Z12);
+        CopySubMatrix(sP, Z22);
+    }
+    // P4
     SubtractSubMatrix(G, E, sbuff1);
-    multShtrassenImp(D, sbuff1, sP4);
+    multShtrassenImp(D, sbuff1, sP, 0, buffer);
+    if (flagAdd) {
+        SumSubMatrix(Z11, sP, Z11);
+        SumSubMatrix(Z21, sP, Z21);
+    }
+    else {
+        CopySubMatrix(sP, Z11);
+        CopySubMatrix(sP, Z21);
+    }
+    // P2
+    SumSubMatrix(A, B, sbuff1);
+    multShtrassenImp(sbuff1, H, sP, 0, buffer);
+    SumSubMatrix(Z12, sP, Z12);
+    SubtractSubMatrix(Z11, sP, Z11);
+    // P3
+    SumSubMatrix(C, D, sbuff1);
+    multShtrassenImp(sbuff1, E, sP, 0, buffer);
+    SumSubMatrix(Z21, sP, Z21);
+    SubtractSubMatrix(Z22, sP, Z22);
+    // P5
     SumSubMatrix(A, D, sbuff1);
     SumSubMatrix(E, H, sbuff2);
-    multShtrassenImp(sbuff1, sbuff2, sP5);
+    multShtrassenImp(sbuff1, sbuff2, sP, 0, buffer);
+    SumSubMatrix(Z22, sP, Z22);
+    SumSubMatrix(Z11, sP, Z11);
+    // P6
     SubtractSubMatrix(B, D, sbuff1);
-    SumSubMatrix(G, H, sbuff2);
-    multShtrassenImp(sbuff1, sbuff2, sP6);
-    SubtractSubMatrix(A, C, sbuff1);
-    SumSubMatrix(E, F, sbuff2);
-    multShtrassenImp(sbuff1, sbuff2, sP7);
-
-
-    SumSubMatrix(Z11, sP5, Z11);
-    SumSubMatrix(Z11, sP4, Z11);
-    SubtractSubMatrix(Z11, sP2, Z11);
-    SumSubMatrix(Z11, sP6, Z11);
-
-    SumSubMatrix(Z12, sP1, Z12);
-    SumSubMatrix(Z12, sP2, Z12);
-
-    SumSubMatrix(Z21, sP3, Z21);
-    SumSubMatrix(Z21, sP4, Z21);
-
-    SumSubMatrix(Z22, sP1, Z22);
-    SumSubMatrix(Z22, sP5, Z22);
-    SubtractSubMatrix(Z22, sP3, Z22);
-    SubtractSubMatrix(Z22, sP7, Z22);
-
-    Matrix_Free(P1);
-    Matrix_Free(P2);
-    Matrix_Free(P3);
-    Matrix_Free(P4);
-    Matrix_Free(P5);
-    Matrix_Free(P6);
-    Matrix_Free(P7);
-    Matrix_Free(buff1);
-    Matrix_Free(buff2);
-
+    SumSubMatrix(G, H, sP);
+    multShtrassenImp(sbuff1, sP, Z11, 1, buffer);
+    // P7
+    SubtractSubMatrix(C, A, sbuff1);
+    SumSubMatrix(E, F, sP);
+    multShtrassenImp(sbuff1, sP, Z22, 1, buffer);
 }
 
 #define MAX_VALUE 10
 
+double sampleMean(int* arr, int len) {
+    int sum = 0;
+    for (int i = 0; i < len; i++) {
+        sum += arr[i];
+    }
+    double result = (double)sum / len;
+    return result;
+}
+
+double sampleStandardDeviation(int* arr, int len) {
+    double mean = sampleMean(arr, len);
+    double sum = 0;
+    for (int i = 0; i < len; i++) {
+        double buff = arr[i] - mean;
+        sum += buff * buff;
+    }
+    return sqrt(sum) / len;
+}
+
+double geometricMean(int* arr, int len) {
+    double product = 1;
+    for (int i = 0; i < len; i++) {
+        product *= arr[i];
+    }
+    return pow(product, 1.0 / len);
+}
+
+void printTimes(FILE* file, int* arr,int len) {
+    fprintf(file, "%.2f;%.2f;%.2f;", sampleMean(arr, len), sampleStandardDeviation(arr, len), geometricMean(arr, len));
+}
 
 int main() {
-    int n = 1024;
-    Matrix A = Matrix_Init(n, n);
-    Matrix B = Matrix_Init(n, n);
-    Matrix C = Matrix_Init(n, n);
-    unsigned int seed = 777; //time(NULL)
+    setlocale(LC_ALL, "ru_RU.utf8");
+    unsigned int seed = 777; // time(NULL)
     srand(seed);
+    FILE* file = fopen("result.csv", "w");
 
-    printf("Native:\n");
-    for (int i = 0; i < 10; i++) {
-        Matrix_RandomFill(A, MAX_VALUE);
-        Matrix_RandomFill(B, MAX_VALUE);
+    int k = 10;
+    int* tNative = (int*)malloc(k * sizeof(int));
+    nullCheck(tNative);
+    int* tRecurrent = (int*)malloc(k * sizeof(int));
+    nullCheck(tRecurrent);
+    int* tShtrassen = (int*)malloc(k * sizeof(int));
+    nullCheck(tShtrassen);
 
-        Matrix_ZeroFill(C);
+    fprintf(file, "N;Native;;;Recurrent;;;Shtrassen\n");
+    fprintf(file, ";sampleMean;sampleStandardDeviation;geometricMean;sampleMean;sampleStandardDeviation;geometricMean;sampleMean;sampleStandardDeviation;geometricMean\n");
 
-        double time_spent = 0.0;
-        clock_t begin = clock();
-        multNative(A, B, C);
-        clock_t end = clock();
-        printf("%d ms\n", (end - begin));
+    for (int n = 64; n <= 1024; n += 64)
+    {
+        printf("%d\n", n);
+        Matrix A = Matrix_Init(n, n);
+        Matrix B = Matrix_Init(n, n);
+        Matrix C = Matrix_Init(n, n);
+
+
+
+
+        for (int i = 0; i < k; i++) {
+            Matrix_RandomFill(A, MAX_VALUE);
+            Matrix_RandomFill(B, MAX_VALUE);
+
+            clock_t time = clock();
+            multNative(A, B, C);
+            tNative[i] = (int)(clock() - time);
+            time = clock();
+            multRecurrent(A, B, C);
+            tRecurrent[i] = (int)(clock() - time);
+            time = clock();
+            multShtrassen(A, B, C);
+            tShtrassen[i] = (int)(clock() - time);
+
+        }
+        Matrix_Free(A);
+        Matrix_Free(B);
+        Matrix_Free(C);
+        fprintf(file, "%d;", n);
+        printTimes(file, tNative, k);
+        printTimes(file, tRecurrent, k);
+        printTimes(file, tShtrassen, k);
+        fprintf(file, "\n");
     }
+    free(tNative);
+    free(tRecurrent);
+    free(tShtrassen);
 
-    printf("Recurrent:\n");
-    for (int i = 0; i < 10; i++) {
-        Matrix_RandomFill(A, MAX_VALUE);
-        Matrix_RandomFill(B, MAX_VALUE);
+    fclose(file);
 
-        Matrix_ZeroFill(C);
 
-        double time_spent = 0.0;
-        clock_t begin = clock();
-        multRecurrent(A, B, C);
-        clock_t end = clock();
-        printf("%d ms\n", (end - begin));
-    }
 
-    printf("Shtrassen:\n");
-    for (int i = 0; i < 10; i++) {
-        Matrix_RandomFill(A, MAX_VALUE);
-        Matrix_RandomFill(B, MAX_VALUE);
-
-        Matrix_ZeroFill(C);
-
-        double time_spent = 0.0;
-        clock_t begin = clock();
-        multShtrassen(A, B, C);
-        clock_t end = clock();
-        printf("%d ms\n", (end - begin));
-    }
-
-    //Matrix_RandomFill(A, MAX_VALUE);
-    //Matrix_RandomFill(B, MAX_VALUE);
-
-    //Matrix_ZeroFill(C);
-    //multNative(A, B, C);
-    //Matrix_Print(C);
-    //printf("\n");
-    //Matrix_ZeroFill(C);
-    //multRecurrent(A, B, C);
-    //Matrix_Print(C);
-    //printf("\n");
-    //Matrix_ZeroFill(C);
-    //multShtrassen(A, B, C);
-    //Matrix_Print(C);
-    printf("\n");
-
-    Matrix_Free(A);
-    Matrix_Free(B);
-    Matrix_Free(C);
 }
